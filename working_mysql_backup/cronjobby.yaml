@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: s3-backup-db
+spec:
+  schedule: "*/1 * * * *"
+  jobTemplate:
+    spec:
+
+      template:
+        spec:
+          serviceAccountName: s3-access
+          # activeDeadlineSeconds: 7200
+          containers:
+          - name: init-s3
+            image: amazon/aws-cli
+            command:
+                - bash
+                - "-c"
+                - |
+                  #!/bin/sh
+                  set -o pipefails
+                  d=$(date +"%d-%m-%y")
+                  t=$(date +"%T")
+                  newt=$(echo $t | sed 's/:/-/g')
+                  cd /var/lib 
+                  tar -zcvf  bkup.tar.gz mysql/* 
+                  ls -lh
+                  aws s3 cp bkup.tar.gz s3://mysql-backup-from-eks/$newt 
+                  echo "ending"
+            volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          volumes:
+          - name: data
+            persistentVolumeClaim:
+              claimName: mysql-pv-claim
+          restartPolicy: Never 

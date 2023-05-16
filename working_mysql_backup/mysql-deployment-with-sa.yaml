@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-mysql-init
+  labels:
+    app: wordpress
+spec:
+  ports:
+    - port: 3306
+  selector:
+    app: wordpress
+    tier: mysql
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-pass
+  namespace: default
+type: Opaque
+data:
+  password : hello123
+--- 
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pv-claim
+  labels:
+    app: wordpress
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress-mysql-init
+  labels:
+    app: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: mysql
+    spec:
+      serviceAccountName: s3-access
+      initContainers: 
+      - name: model-init
+        image: amazon/aws-cli
+        imagePullPolicy: Always
+        command:
+            - bash
+            - "-c"
+            - |
+              #!/bin/sh
+              # Configure AWS CLI
+              yum update && yum install -y tar && yum install -y gzip
+              mkdir -p /var/lib/mysql
+              # mkdir -p /var/lib/mysql/mysql
+              # Download latest file from S3 bucket
+              latest_file=$(aws s3api list-objects-v2 --bucket mysql-backup-from-eks --query "reverse(sort_by(Contents, &LastModified))[0].Key" --output text)
+              aws s3 cp s3://mysql-backup-from-eks/$latest_file /var/lib/
+
+              # Untar the downloaded file
+              cd /var/lib/ && tar -xvzf /var/lib/$latest_file
+              ls -al
+              # Remove downloaded filecd 
+              #rm -rf new
+
+              # Start the actual container process
+              exec "$@"
+
+        volumeMounts:
+        - name: mysql-persistent-storage
+          mountPath: /var/lib/mysql
+      containers:
+      - image: mysql:5.6
+        name: mysql
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-pass
+              key: password
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - name: mysql-persistent-storage
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: mysql-persistent-storage
+        persistentVolumeClaim:
+          claimName: mysql-pv-claim

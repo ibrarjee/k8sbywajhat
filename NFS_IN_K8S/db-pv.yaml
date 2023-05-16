@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: db-pv
+  labels:
+    app: db-data
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  nfs:
+    server: "foo.grovcreeops.net"
+    path: "/pvc_new" # "pvc" folder must exist in "/exports" directory of NFS servery
