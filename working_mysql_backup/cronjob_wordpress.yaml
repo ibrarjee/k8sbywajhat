@@ -1,15 +1,15 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: s3-backup-db
+  name: s3-wordpress
 spec:
-  schedule: "*/1 * * * *"
+  schedule: "*/10 * * * *"
   jobTemplate:
     spec:
 
       template:
         spec:
-          serviceAccountName: s3-access
+          serviceAccountName: s3-access-and-ssm
           # activeDeadlineSeconds: 7200
           containers:
           - name: init-s3
@@ -20,19 +20,21 @@ spec:
                 - |
                   #!/bin/sh
                   set -o pipefails
+                  yum -y update && yum install -y tar && yum install -y gzip
                   d=$(date +"%d-%m-%y")
                   t=$(date +"%T")
+                  name="wordpress"
                   newt=$(echo $t | sed 's/:/-/g')
-                  cd /var/lib 
-                  tar -zcvf  bkup.tar.gz mysql/* 
+                  cd /var/www 
+                  tar -zcvf  bkup.tar.gz html/* 
                   ls -lh
-                  aws s3 cp bkup.tar.gz s3://mysql-backup-from-eks/$newt 
+                  aws s3 cp bkup.tar.gz s3://mysql-backup-from-eks/"$name$t"
                   echo "ending"
             volumeMounts:
             - name: data
-              mountPath: /var/lib/mysql
+              mountPath: /var/www/html
           volumes:
           - name: data
             persistentVolumeClaim:
-              claimName: mysql-pv-claim
+              claimName: wp-pv-claim
           restartPolicy: Never 

@@ -44,6 +44,38 @@ spec:
         app: wordpress
         tier: frontend
     spec:
+      serviceAccountName: s3-access-and-ssm
+      initContainers: 
+      - name: model-init
+        image: amazon/aws-cli
+        imagePullPolicy: Always
+        command:
+            - bash
+            - "-c"
+            - |
+              #!/bin/sh
+              set -o pipefails
+              yum -y update && yum install -y tar && yum install -y gzip
+              mkdir -p /var/www/html
+              # Download latest file from S3 bucket
+              latest_file=$(aws s3api list-objects-v2 --bucket mysql-backup-from-eks --query "reverse(sort_by(Contents[?contains(Key, 'wordpress')], &LastModified))[0].Key" --output text) 
+              # Check if the variable is empty
+              if [ -z "$latest_file" ]; then
+                echo "The is no backup in s3."
+              # If the variable is not empty, run this code
+              else
+                aws s3 cp s3://mysql-backup-from-eks/$latest_file /var/www/
+                # Untar the downloaded file
+                cd /var/www/ && tar -xvzf /var/www/$latest_file
+                ls -al
+                # Remove downloaded filecd 
+                #rm -rf new
+                # Start the actual container process
+                exec "$@" 
+              fi
+        volumeMounts:
+        - name: wordpress-persistent-storage
+          mountPath: /var/www/html
       containers:
       - image: wordpress:4.8-apache
         name: wordpress
@@ -53,15 +85,23 @@ spec:
         - name: WORDPRESS_DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: mysql-pass
-              key: password
+              name: db-secret
+              key: db_password
         ports:  
         - containerPort: 80
           name: wordpress
         volumeMounts:
         - name: wordpress-persistent-storage
           mountPath: /var/www/html
+        - name: secrets-store-inline-wp
+          mountPath: "/mnt/secrets"
       volumes:
       - name: wordpress-persistent-storage
         persistentVolumeClaim:
           claimName: wp-pv-claim
+      - name: secrets-store-inline-wp
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: nginx-deployment-spc-k8s-secrets

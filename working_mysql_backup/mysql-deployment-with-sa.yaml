@@ -11,14 +11,14 @@ spec:
     app: wordpress
     tier: mysql
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: mysql-pass
-  namespace: default
-type: Opaque
-data:
-  password : hello123
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: mysql-pass
+#   namespace: default
+# type: Opaque
+# data:
+#   password : hello123
 --- 
 
 apiVersion: v1
@@ -53,7 +53,7 @@ spec:
         app: wordpress
         tier: mysql
     spec:
-      serviceAccountName: s3-access
+      serviceAccountName: s3-access-and-ssm
       initContainers: 
       - name: model-init
         image: amazon/aws-cli
@@ -63,23 +63,25 @@ spec:
             - "-c"
             - |
               #!/bin/sh
-              # Configure AWS CLI
-              yum update && yum install -y tar && yum install -y gzip
+              set -o pipefails
+              yum -y update && yum install -y tar && yum install -y gzip
               mkdir -p /var/lib/mysql
-              # mkdir -p /var/lib/mysql/mysql
               # Download latest file from S3 bucket
-              latest_file=$(aws s3api list-objects-v2 --bucket mysql-backup-from-eks --query "reverse(sort_by(Contents, &LastModified))[0].Key" --output text)
-              aws s3 cp s3://mysql-backup-from-eks/$latest_file /var/lib/
-
-              # Untar the downloaded file
-              cd /var/lib/ && tar -xvzf /var/lib/$latest_file
-              ls -al
-              # Remove downloaded filecd 
-              #rm -rf new
-
-              # Start the actual container process
-              exec "$@"
-
+              latest_file=$(aws s3api list-objects-v2 --bucket mysql-backup-from-eks --query "reverse(sort_by(Contents[?contains(Key, 'mysql')], &LastModified))[0].Key" --output text) 
+              # Check if the variable is empty
+              if [ -z "$latest_file" ]; then
+                echo "The is no backup in s3."
+              # If the variable is not empty, run this code
+              else
+                aws s3 cp s3://mysql-backup-from-eks/$latest_file /var/lib/
+                # Untar the downloaded file
+                cd /var/lib/ && tar -xvzf /var/lib/$latest_file
+                ls -al
+                # Remove downloaded filecd 
+                #rm -rf new
+                # Start the actual container process
+                exec "$@" 
+              fi
         volumeMounts:
         - name: mysql-persistent-storage
           mountPath: /var/lib/mysql
@@ -90,15 +92,24 @@ spec:
         - name: MYSQL_ROOT_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: mysql-pass
-              key: password
+              name: db-secret
+              key: db_password
         ports:
         - containerPort: 3306
           name: mysql
         volumeMounts:
         - name: mysql-persistent-storage
           mountPath: /var/lib/mysql
+        - name: secrets-store-inline-mysql
+          mountPath: "/mnt/secrets"
+          readOnly: true
       volumes:
       - name: mysql-persistent-storage
         persistentVolumeClaim:
           claimName: mysql-pv-claim
+      - name: secrets-store-inline-mysql
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: nginx-deployment-spc-k8s-secrets 
